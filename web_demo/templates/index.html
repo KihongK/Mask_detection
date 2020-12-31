@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<!--  --> <!-- 주석 복사용 -->
+	<title> Mask Detection </title>
+
+	<!-- script 태그는 html에 javascript 를 사용하기 위한 태그 -->
+	<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+	<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+	<!-- link 태그는 외부 리소스를 사용하기 위함이다. rel: 외부 리소스를 현재 html 파일 어느 부분에 적용시킬지 관계에 대한 정보를 갖고있다.  -->
+	<!-- integrity 와 crossorigin 는 외부 리소스를 해킹 당했을 경우 보안을 먹적으로 사용하는 속성이다.-->
+	<link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" integrity="sha384-JcKb8q3iqJ61gNV9KGb8thSsNjpSL0n8PARn9HuZOnIxN0hoP+VmmDGMN5t9UJ0Z" crossorigin="anonymous">
+	<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.0/css/all.css" integrity="sha384-lZN37f5QGtY3VHgisS14W3ExzMWZxybE1SJSEsQp9S+oqd12jhcu+A56Ebc1zFSJ" crossorigin="anonymous">
+	<!--  -->
+</head>
+<style>
+</style>
+<body>
+	<!-- div 는 공간을 나누는 역할을 한다  -->
+	<div class="container p-0" >
+		<header> <!-- header 태그는 모든 홈페이지들의 상단 부분 역할을 하는 태그이다 (ex naver, daum 상단 로고가 위치한 line) -->
+			<!-- nav 태그는 div 태그에 의미를 부여한 태그이고 directory를 알려주는 목적을 갖고있따.
+		       여기서는 div와 큰차이 없게 사용했따. -->
+	      <nav class="navbar navbar-dark bg-dark rounded">
+					<!-- a 태그는 경로 이동을 목적으로 사용하지만 여기는 딱히 목적이 없다. -->
+	        <a class="navbar-brand">
+						<!-- i 태그는 글자를 기울일때 사용하기도 하고 icon을 받을 때 사용하기도 한다. -->
+	        	<i class="fas fa-camera"></i>
+						<!-- strong은 글씨 강조용 -->
+	        	<strong>Masks Detection</strong>
+	        </a>
+	      </nav>
+	    </header>
+	</div>
+
+
+	<div class="container ">
+		<div class="row bg-light" style="height:480px">
+
+			<video id="video" playsinline class="border " style="margin:auto;display:inline-block;"></video>
+			<canvas id="output" class="canvas-output" style="margin:auto;position:relative;top:-480px;left:10px"></canvas>
+
+		</div>
+    </div>
+</body>
+
+<script>
+	//Coded by oh yicong, visit my youtube channel for more programming tutorials :)
+	var model, mask_model, ctx, videoWidth, videoHeight, canvas;
+
+	//document.getElementById 는 id는 고유한 정보기 때문에 찾고자하는 id를 통해 정보를 가져온다는 의미
+
+	// const 는 변하지 않는 상수를 설정한다는 의미
+	const video = document.getElementById('video');
+	const state = {
+	  backend: 'webgl'
+	};
+	async function setupCamera() {
+		const stream = await navigator.mediaDevices.getUserMedia({
+		    'audio': false,
+		    'video': { facingMode: 'user' },
+		});
+		video.srcObject = stream;
+	    return new Promise((resolve) => {
+		    video.onloadedmetadata = () => {
+		      resolve(video);
+		    };
+		});
+	}
+
+	const renderPrediction = async () => {
+		tf.engine().startScope()
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		//estimatefaces model takes in 4 parameter (1) video, returnTensors, flipHorizontal, and annotateBoxes
+		const predictions = await model.estimateFaces(video, true,false,false);
+		const offset = tf.scalar(127.5);
+		//check if prediction length is more than 0
+		if (predictions.length > 0) {
+			//clear context
+
+		    for (let i = 0; i < predictions.length; i++) {
+		    	var text=""
+			    var start = predictions[i].topLeft.arraySync();
+			    var end = predictions[i].bottomRight.arraySync();
+			    var size = [end[0] - start[0], end[1] - start[1]];
+			    if(videoWidth<end[0] && videoHeight<end[0]){
+			    	console.log("image out of frame")
+			    	continue
+			    }
+			    var inputImage = tf.browser.fromPixels(video).toFloat()
+			    inputImage = inputImage.sub(offset).div(offset);
+			    inputImage=inputImage.slice([parseInt(start[1]),parseInt(start[0]),0],[parseInt(size[1]),parseInt(size[0]),3])
+			    inputImage=inputImage.resizeBilinear([224,224]).reshape([1,224,224,3])
+			    result=mask_model.predict(inputImage).dataSync()
+			    result= Array.from(result)
+			    ctx.beginPath()
+			    if (result[1]>result[0]){
+			    	//no mask on
+			      	ctx.strokeStyle="red"
+			      	ctx.fillStyle = "red";
+			      	text = "No Mask: "+(result[1]*100).toPrecision(3).toString()+"%";
+			    }else{
+			    	//mask on
+			      	ctx.strokeStyle="green"
+			      	ctx.fillStyle = "green";
+			      	text = "Mask: "+(result[0]*100).toPrecision(3).toString()+"%";
+			    }
+		        ctx.lineWidth = "4"
+			    ctx.rect(start[0], start[1],size[0], size[1])
+			    ctx.stroke()
+			    ctx.font = "bold 15pt sans-serif";
+			    ctx.fillText(text,start[0]+5,start[1]+20)
+		    }
+		}
+		//update frame
+		requestAnimationFrame(renderPrediction);
+		tf.engine().endScope()
+	};
+
+	const setupPage = async () => {
+	    await tf.setBackend(state.backend);
+	    await setupCamera();
+	    video.play();
+
+	    videoWidth = video.videoWidth;
+	    videoHeight = video.videoHeight;
+	    video.width = videoWidth;
+	    video.height = videoHeight;
+
+	    canvas = document.getElementById('output');
+	    canvas.width = videoWidth;
+	    canvas.height = videoHeight;
+	    ctx = canvas.getContext('2d');
+	    ctx.fillStyle = "rgba(255, 0, 0, 0.5)";
+
+	    model = await blazeface.load();
+
+	    mask_model = await tf.loadLayersModel('../static/models/model.json');
+
+	   renderPrediction();
+	};
+
+	setupPage();
+
+</script>
+<script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js" integrity="sha384-B4gt1jrGC7Jh4AgTPSdUtOBvfO8shuf57BaghqFfPlYxofvL8/KUEfYiJOMMV+rV" crossorigin="anonymous"></script>
+
+</html>
